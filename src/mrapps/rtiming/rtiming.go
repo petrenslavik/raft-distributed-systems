@@ -1,16 +1,16 @@
-package main
+package rtiming
 
 //
 // a MapReduce pseudo-application to test that workers
 // execute reduce tasks in parallel.
 //
-// go build -buildmode=plugin rtiming.go
+// (Windows-native port: imported as a package by mrapps/apps. syscall.Kill
+// liveness check removed; see mtiming for the rationale.)
 //
 
 import "6.5840/mr"
 import "fmt"
 import "os"
-import "syscall"
 import "time"
 import "io/ioutil"
 
@@ -24,8 +24,8 @@ func nparallel(phase string) int {
 		panic(err)
 	}
 
-	// are any other workers running?
-	// find their PIDs by scanning directory for mr-worker-XXX files.
+	// how many other workers are running concurrently?
+	// find them by scanning the directory for mr-worker-XXX files.
 	dd, err := os.Open(".")
 	if err != nil {
 		panic(err)
@@ -40,11 +40,7 @@ func nparallel(phase string) int {
 		pat := fmt.Sprintf("mr-worker-%s-%%d", phase)
 		n, err := fmt.Sscanf(name, pat, &xpid)
 		if n == 1 && err == nil {
-			err := syscall.Kill(xpid, 0)
-			if err == nil {
-				// if err == nil, xpid is alive.
-				ret += 1
-			}
+			ret += 1
 		}
 	}
 	dd.Close()

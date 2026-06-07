@@ -68,8 +68,9 @@ func CallExample() {
 // usually returns true.
 // returns false if something goes wrong.
 func call(rpcname string, args interface{}, reply interface{}) bool {
-	// c, err := rpc.DialHTTP("tcp", "127.0.0.1"+":1234")
-	c, err := rpc.DialHTTP("unix", coordSockName)
+	// Windows-native port: TCP loopback transport (coordSockName is a
+	// "127.0.0.1:port" address) instead of a Unix-domain socket.
+	c, err := rpc.DialHTTP("tcp", coordSockName)
 	if err != nil {
 		log.Fatal("dialing:", err)
 	}

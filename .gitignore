@@ -1,2 +1,20 @@
 pkg/
 *-handin.tar.gz
+
+# --- Compiled binaries (built by build-mr.ps1 / Makefile) ---
+*.exe
+*.so
+*.dll
+*.test
+src/main/mrsequential
+src/main/mrcoordinator
+src/main/mrworker
+
+# --- MapReduce run output & temp dirs ---
+mr-out*
+**/mr-tmp-*/
+
+# --- course/ scaffolding: large, derived, or copyrighted ---
+course/_tools/node_modules/
+course/_html/
+course/papers/*.pdf

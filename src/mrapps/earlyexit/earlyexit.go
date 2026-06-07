@@ -1,9 +1,10 @@
-package main
+package earlyexit
 
 //
-// a word-count application "plugin" for MapReduce.
+// a MapReduce application that has some long-running reduce tasks, used to
+// test that no worker or coordinator exits before all output is finalized.
 //
-// go build -buildmode=plugin wc_long.go
+// (Windows-native port: imported as a package by mrapps/apps.)
 //
 
 import (

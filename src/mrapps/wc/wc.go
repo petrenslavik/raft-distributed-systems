@@ -1,9 +1,10 @@
-package main
+package wc
 
 //
-// a word-count application "plugin" for MapReduce.
+// a word-count application for MapReduce.
 //
-// go build -buildmode=plugin wc.go
+// (Windows-native port: imported as a package by mrapps/apps instead of
+// being loaded as a -buildmode=plugin .so, which Windows does not support.)
 //
 
 import "6.5840/mr"

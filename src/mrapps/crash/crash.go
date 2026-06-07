@@ -1,9 +1,12 @@
-package main
+package crash
 
 //
-// same as crash.go but doesn't actually crash.
+// a MapReduce pseudo-application that sometimes crashes,
+// and sometimes takes a long time,
+// to test MapReduce's ability to recover.
 //
-// go build -buildmode=plugin nocrash.go
+// (Windows-native port: imported as a package by mrapps/apps. os.Exit(1)
+// still crashes the worker process, since workers run as separate processes.)
 //
 
 import "6.5840/mr"
@@ -13,13 +16,19 @@ import "strings"
 import "os"
 import "sort"
 import "strconv"
+import "time"
 
 func maybeCrash() {
 	max := big.NewInt(1000)
 	rr, _ := crand.Int(crand.Reader, max)
-	if false && rr.Int64() < 500 {
+	if rr.Int64() < 330 {
 		// crash!
 		os.Exit(1)
+	} else if rr.Int64() < 660 {
+		// delay for a while.
+		maxms := big.NewInt(10 * 1000)
+		ms, _ := crand.Int(crand.Reader, maxms)
+		time.Sleep(time.Duration(ms.Int64()) * time.Millisecond)
 	}
 }
 

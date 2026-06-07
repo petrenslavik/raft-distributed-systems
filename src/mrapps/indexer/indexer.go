@@ -1,9 +1,9 @@
-package main
+package indexer
 
 //
-// an indexing application "plugin" for MapReduce.
+// an indexing application for MapReduce.
 //
-// go build -buildmode=plugin indexer.go
+// (Windows-native port: imported as a package by mrapps/apps.)
 //
 
 import "fmt"

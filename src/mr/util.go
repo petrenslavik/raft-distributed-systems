@@ -1,13 +1,28 @@
 package mr
 
+//
+// Test helpers for the MapReduce lab.
+//
+// Windows-native port: the stock version shells out to the Unix tools
+// `find`, `sort`, and `cmp`, uses Unix-domain sockets under /tmp, and runs
+// extension-less binaries. This version uses pure-Go equivalents, a TCP
+// loopback "host:port" socket name, and adds the ".exe" suffix on Windows.
+// None of the student-facing logic (mr/coordinator.go, mr/worker.go) lives
+// here; only the given test harness was ported.
+//
+
 import (
+	"bytes"
 	crand "crypto/rand"
 	"encoding/base64"
+	"fmt"
 	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -15,8 +30,17 @@ import (
 
 var tmp string
 
+// exe returns the path of a built helper binary, adding the platform's
+// executable suffix (".exe" on Windows).
+func exe(p string) string {
+	if runtime.GOOS == "windows" {
+		return p + ".exe"
+	}
+	return p
+}
+
 func startWorker(app string, i int, c chan int, sock string) {
-	worker := exec.Command("../../main/mrworker", append([]string{app}, sock)...)
+	worker := exec.Command(exe("../../main/mrworker"), append([]string{app}, sock)...)
 	worker.Stderr = os.Stderr
 	worker.Stdout = os.Stdout
 	worker.Dir = tmp
@@ -34,7 +58,7 @@ func startWorker(app string, i int, c chan int, sock string) {
 // Run MapReduce: start a coordinator and several workers,
 // and wait for the coordinator being done
 func runMRchan(files []string, app string, n int, c chan int, sock string) {
-	coord := exec.Command("../main/mrcoordinator", append([]string{sock}, files...)...)
+	coord := exec.Command(exe("../main/mrcoordinator"), append([]string{sock}, files...)...)
 	coord.Stderr = os.Stderr
 	coord.Stdout = os.Stdout
 	if err := coord.Start(); err != nil {
@@ -53,7 +77,6 @@ func runMRchan(files []string, app string, n int, c chan int, sock string) {
 	if c != nil {
 		c <- n
 	}
-	os.Remove(sock)
 }
 
 func runMR(files []string, app string, n int) {
@@ -68,69 +91,90 @@ func RandString(n int) string {
 	return s[0:n]
 }
 
-// Cook up a unique-ish UNIX-domain socket name
-// in /var/tmp, for the coordinator.
+// Cook up a unique-ish TCP loopback address for the coordinator.
+// (Windows-native port: was a UNIX-domain socket path under /tmp.)
 func coordinatorSock() string {
-	const N = 20
-	s := "/tmp/5840-mr-"
-	s += RandString(20)
-	return s
+	b := make([]byte, 2)
+	crand.Read(b)
+	port := 20000 + (int(b[0])<<8|int(b[1]))%20000 // 20000..39999
+	return fmt.Sprintf("127.0.0.1:%d", port)
+}
+
+// sortLinesToFile reads the lines of every input file, sorts them
+// lexicographically, and writes them to out. Replaces the Unix `sort`.
+// Using the same Go sort for both the "correct" and the "merged" output
+// guarantees they are byte-identical when the reduce results agree.
+func sortLinesToFile(inputs []string, out string) {
+	var lines []string
+	for _, in := range inputs {
+		data, err := os.ReadFile(in)
+		if err != nil {
+			log.Fatalf("read %v failed err %v", in, err)
+		}
+		text := strings.TrimRight(string(data), "\n")
+		if text == "" {
+			continue
+		}
+		lines = append(lines, strings.Split(text, "\n")...)
+	}
+	sort.Strings(lines)
+	f, err := os.Create(out)
+	if err != nil {
+		log.Fatalf("create %v failed err %v", out, err)
+	}
+	defer f.Close()
+	for _, l := range lines {
+		fmt.Fprintln(f, l)
+	}
 }
 
 // Generate correct output for a test
 func mkCorrectOutput(files []string, app, out string) {
 	args := append([]string{app}, files...)
-	cmd := exec.Command("../../main/mrsequential", args...)
+	cmd := exec.Command(exe("../../main/mrsequential"), args...)
 	cmd.Dir = tmp
+	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		log.Fatalf("mrsequential %v failed err %v", args, err)
 	}
-	outputFile, err := os.Create(filepath.Join(tmp, out))
-	if err != nil {
-		log.Fatalf("create %v failed err %v", out, err)
-	}
-	defer outputFile.Close()
-	cmd = exec.Command("sort", filepath.Join(tmp, "mr-out-0"))
-	cmd.Stdout = outputFile
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		log.Fatalf("sort failed err %v", err)
-	}
-	if err := os.Remove(filepath.Join(tmp, "mr-out-0")); err != nil {
+	src := filepath.Join(tmp, "mr-out-0")
+	sortLinesToFile([]string{src}, filepath.Join(tmp, out))
+	if err := os.Remove(src); err != nil {
 		log.Fatalf("Remove failed err %v", err)
 	}
 }
 
 func mergeOutput(out string) {
-	files := findFiles(tmp, `mr-out-[0-9]`)
+	files := findFiles(tmp, "mr-out-[0-9]")
 	if len(files) < 1 {
 		log.Fatalf("reduce created no mr-out-X output files!")
 	}
-	outputFile, err := os.Create(filepath.Join(tmp, out))
-	if err != nil {
-		log.Fatalf("create %v failed err %v", out, err)
-	}
-	defer outputFile.Close()
-	cmd := exec.Command("sort", files...)
-	cmd.Stdout = outputFile
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		log.Fatalf("sort failed err %v", err)
-	}
+	sortLinesToFile(files, filepath.Join(tmp, out))
 }
 
+// findFiles returns the files directly under dir whose name matches the glob
+// pattern s. Replaces the Unix `find dir -type f -name s` (none of the call
+// sites need recursion). Returned paths are prefixed with dir, sorted.
 func findFiles(dir, s string) []string {
-	cmd := exec.Command("find", dir, "-type", "f", "-name", s)
-	output, err := cmd.Output()
+	entries, err := os.ReadDir(dir)
 	if err != nil {
-		log.Fatalf("find failed err %v\n", err)
+		log.Fatalf("ReadDir %v failed err %v\n", dir, err)
 		return nil
 	}
-	s1 := strings.TrimSpace(string(output))
-	if s1 == "" {
-		return []string{}
+	files := []string{}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		ok, err := filepath.Match(s, e.Name())
+		if err != nil {
+			log.Fatalf("bad pattern %q: %v", s, err)
+		}
+		if ok {
+			files = append(files, filepath.Join(dir, e.Name()))
+		}
 	}
-	files := strings.Split(s1, "\n")
+	sort.Strings(files)
 	return files
 }
 
@@ -156,10 +200,15 @@ func cleanup() {
 }
 
 func runCmp(t *testing.T, f1, f2, msg string) {
-	cmd := exec.Command("cmp", f1, f2)
-	cmd.Dir = tmp
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
+	a, err := os.ReadFile(filepath.Join(tmp, f1))
+	if err != nil {
+		t.Fatalf("%s (read %s: %v)", msg, f1, err)
+	}
+	b, err := os.ReadFile(filepath.Join(tmp, f2))
+	if err != nil {
+		t.Fatalf("%s (read %s: %v)", msg, f2, err)
+	}
+	if !bytes.Equal(a, b) {
 		t.Fatalf(msg)
 	}
 }

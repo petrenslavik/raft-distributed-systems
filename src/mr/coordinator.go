@@ -2,7 +2,6 @@ package mr
 
 import "log"
 import "net"
-import "os"
 import "net/rpc"
 import "net/http"
 
@@ -24,11 +23,14 @@ func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
 
 
 // start a thread that listens for RPCs from worker.go
+//
+// (Windows-native port: the transport is TCP on a loopback host:port instead
+// of a Unix-domain socket, since Unix sockets and /tmp paths are awkward on
+// Windows. "sockname" is therefore an address like "127.0.0.1:34567".)
 func (c *Coordinator) server(sockname string) {
 	rpc.Register(c)
 	rpc.HandleHTTP()
-	os.Remove(sockname)
-	l, e := net.Listen("unix", sockname)
+	l, e := net.Listen("tcp", sockname)
 	if e != nil {
 		log.Fatalf("listen error %s: %v", sockname, e)
 	}

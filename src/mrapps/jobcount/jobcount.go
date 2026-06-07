@@ -1,11 +1,11 @@
-package main
+package jobcount
 
 //
 // a MapReduce pseudo-application that counts the number of times map/reduce
 // tasks are run, to test whether jobs are assigned multiple times even when
 // there is no failure.
 //
-// go build -buildmode=plugin crash.go
+// (Windows-native port: imported as a package by mrapps/apps.)
 //
 
 import "6.5840/mr"
