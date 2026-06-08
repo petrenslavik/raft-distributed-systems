@@ -3,13 +3,20 @@ package sockrpc
 import (
 	"log"
 	"net"
+	"os"
+	"path/filepath"
 
 	"6.5840/labrpc"
 	"6.5840/tester1/demux"
 )
 
 func SockName(endName string) string {
-	return "/tmp/6.5840-" + endName
+	// Windows-native port: the stock path "/tmp/6.5840-..." doesn't exist on
+	// Windows. Use the OS temp dir instead; AF_UNIX works on Windows 10+ with
+	// a valid filesystem path. Both the tester and the daemon processes
+	// resolve os.TempDir() to the same location, so the name stays consistent
+	// across them.
+	return filepath.Join(os.TempDir(), "6.5840-"+endName)
 }
 
 type RPCSrv struct {
@@ -38,6 +45,7 @@ func (rpcs *RPCSrv) AddService(svc any) {
 }
 
 func (rpcs *RPCSrv) listen() {
+	os.Remove(SockName(rpcs.sock)) // clear any stale socket file (Windows may not unlink on close)
 	l, err := net.Listen("unix", SockName(rpcs.sock))
 	if err != nil {
 		log.Fatal("tester listen error:", err)
