@@ -14,6 +14,9 @@ src/main/mrworker
 mr-out*
 **/mr-tmp-*/
 
+# --- debug logs (e.g. captured raft test output) ---
+*.log
+
 # --- course/ scaffolding: large, derived, or copyrighted ---
 course/_tools/node_modules/
 course/_html/
