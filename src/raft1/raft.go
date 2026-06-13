@@ -58,6 +58,42 @@ type Raft struct {
 	matchIndex  []int
 }
 
+// the service or tester wants to create a Raft server. the ports
+// of all the Raft servers (including this one) are in peers[]. this
+// server's port is peers[me]. all the servers' peers[] arrays
+// have the same order. persister is a place for this server to
+// save its persistent state, and also initially holds the most
+// recent saved state, if any. applyCh is a channel on which the
+// tester or service expects Raft to send ApplyMsg messages.
+// Make() must return quickly, so it should start goroutines
+// for any long-running work.
+func Make(peers []*labrpc.ClientEnd, me int,
+	persister *tester.Persister, applyCh chan raftapi.ApplyMsg) raftapi.Raft {
+	rf := &Raft{}
+	rf.peers = peers
+	rf.persister = persister
+	rf.me = me
+	rf.applyCh = applyCh
+	log.Println("Server", rf.me, "started")
+	// Your initialization code here (3A, 3B, 3C).
+	rf.votedFor = -1
+	rf.majorityThreshold = (len(peers) + 1) / 2
+	rf.log = []LogEntry{{
+		Term: 0,
+	}}
+	rf.nextIndex = make([]int, len(rf.peers))
+	rf.matchIndex = make([]int, len(rf.peers))
+	// initialize from state persisted before a crash
+	rf.readPersist(persister.ReadRaftState())
+
+	// start ticker goroutine to start elections
+	go rf.ticker()
+	go rf.applyTicker()
+	return rf
+}
+
+// ===== State & persistence =====
+
 // return currentTerm and whether this server
 // believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {
@@ -127,6 +163,38 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	// Your code here (3D).
 
 }
+
+// ===== Client interface =====
+
+// the service using Raft (e.g. a k/v server) wants to start
+// agreement on the next command to be appended to Raft's log. if this
+// server isn't the leader, returns false. otherwise start the
+// agreement and return immediately. there is no guarantee that this
+// command will ever be committed to the Raft log, since the leader
+// may fail or lose an election.
+//
+// the first return value is the index that the command will appear at
+// if it's ever committed. the second return value is the current
+// term. the third return value is true if this server believes it is
+// the leader.
+func (rf *Raft) Start(command interface{}) (int, int, bool) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	defer rf.persist()
+	if rf.state != LeaderState {
+		return rf.commitIndex, rf.currentTerm, false
+	}
+
+	rf.log = append(rf.log, LogEntry{
+		Term:    rf.currentTerm,
+		Command: command,
+	})
+	rf.matchIndex[rf.me] = len(rf.log) - 1
+	log.Println("Leader server", rf.me, "added new entry", command, "to log. \n Now log has", len(rf.log), "entries and its content is", rf.log)
+	return len(rf.log) - 1, rf.currentTerm, true
+}
+
+// ===== Leader election =====
 
 // example RequestVote RPC arguments structure.
 // field names must start with capital letters!
@@ -277,34 +345,6 @@ func (rf *Raft) startElection() {
 	}
 }
 
-// the service using Raft (e.g. a k/v server) wants to start
-// agreement on the next command to be appended to Raft's log. if this
-// server isn't the leader, returns false. otherwise start the
-// agreement and return immediately. there is no guarantee that this
-// command will ever be committed to the Raft log, since the leader
-// may fail or lose an election.
-//
-// the first return value is the index that the command will appear at
-// if it's ever committed. the second return value is the current
-// term. the third return value is true if this server believes it is
-// the leader.
-func (rf *Raft) Start(command interface{}) (int, int, bool) {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	defer rf.persist()
-	if rf.state != LeaderState {
-		return rf.commitIndex, rf.currentTerm, false
-	}
-
-	rf.log = append(rf.log, LogEntry{
-		Term:    rf.currentTerm,
-		Command: command,
-	})
-	rf.matchIndex[rf.me] = len(rf.log) - 1
-	log.Println("Leader server", rf.me, "added new entry", command, "to log. \n Now log has", len(rf.log), "entries and its content is", rf.log)
-	return len(rf.log) - 1, rf.currentTerm, true
-}
-
 func (rf *Raft) ticker() {
 	for {
 		rf.mu.Lock()
@@ -319,65 +359,7 @@ func (rf *Raft) ticker() {
 	}
 }
 
-func (rf *Raft) applyTicker() {
-	for {
-		rf.mu.Lock()
-		for rf.commitIndex > rf.lastApplied {
-			rf.lastApplied++
-			entry := rf.log[rf.lastApplied]
-			commandIndex := rf.lastApplied
-			log.Println("Server", rf.me, "applying command:", entry.Command, "with index ", rf.lastApplied, ". CommitIndex - ", rf.commitIndex)
-			rf.mu.Unlock()
-			rf.applyCh <- raftapi.ApplyMsg{
-				CommandValid: true,
-				Command:      entry.Command,
-				CommandIndex: commandIndex,
-			}
-			rf.mu.Lock()
-			log.Println("Server", rf.me, "applied command:", entry.Command, "with index ", rf.lastApplied, ". CommitIndex - ", rf.commitIndex)
-		}
-		rf.mu.Unlock()
-
-		// pause for a random amount of time between 50 and 350
-		// milliseconds.
-		ms := 10 + (rand.Int63() % 11)
-		time.Sleep(time.Duration(ms) * time.Millisecond)
-	}
-}
-
-// the service or tester wants to create a Raft server. the ports
-// of all the Raft servers (including this one) are in peers[]. this
-// server's port is peers[me]. all the servers' peers[] arrays
-// have the same order. persister is a place for this server to
-// save its persistent state, and also initially holds the most
-// recent saved state, if any. applyCh is a channel on which the
-// tester or service expects Raft to send ApplyMsg messages.
-// Make() must return quickly, so it should start goroutines
-// for any long-running work.
-func Make(peers []*labrpc.ClientEnd, me int,
-	persister *tester.Persister, applyCh chan raftapi.ApplyMsg) raftapi.Raft {
-	rf := &Raft{}
-	rf.peers = peers
-	rf.persister = persister
-	rf.me = me
-	rf.applyCh = applyCh
-	log.Println("Server", rf.me, "started")
-	// Your initialization code here (3A, 3B, 3C).
-	rf.votedFor = -1
-	rf.majorityThreshold = (len(peers) + 1) / 2
-	rf.log = []LogEntry{{
-		Term: 0,
-	}}
-	rf.nextIndex = make([]int, len(rf.peers))
-	rf.matchIndex = make([]int, len(rf.peers))
-	// initialize from state persisted before a crash
-	rf.readPersist(persister.ReadRaftState())
-
-	// start ticker goroutine to start elections
-	go rf.ticker()
-	go rf.applyTicker()
-	return rf
-}
+// ===== Log replication =====
 
 type AppendEntriesArgs struct {
 	Term         int
@@ -441,6 +423,18 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	if args.LeaderCommit > rf.commitIndex {
 		rf.commitIndex = min(args.LeaderCommit, len(rf.log)-1)
 	}
+}
+
+func (rf *Raft) buildFailedReply(failedTerm, prevLogIndex int, reply *AppendEntriesReply) {
+	reply.Success = false
+	reply.FailedTerm = failedTerm
+	reply.FailedFirstIndex = prevLogIndex
+	for i := len(rf.log) - 1; i >= 0; i-- {
+		if reply.FailedTerm == rf.log[i].Term {
+			reply.FailedFirstIndex = i
+		}
+	}
+	reply.FailedFirstIndex = max(reply.FailedFirstIndex, 1)
 }
 
 func (rf *Raft) sendEntries(requestedServerId, term, logIndexToAppend, logTermToAppend, commitIndex int, entries []LogEntry) {
@@ -526,17 +520,35 @@ func (rf *Raft) runHeartbeatCycle() {
 	}
 }
 
-func (rf *Raft) buildFailedReply(failedTerm, prevLogIndex int, reply *AppendEntriesReply) {
-	reply.Success = false
-	reply.FailedTerm = failedTerm
-	reply.FailedFirstIndex = prevLogIndex
-	for i := len(rf.log) - 1; i >= 0; i-- {
-		if reply.FailedTerm == rf.log[i].Term {
-			reply.FailedFirstIndex = i
+// ===== Apply =====
+
+func (rf *Raft) applyTicker() {
+	for {
+		rf.mu.Lock()
+		for rf.commitIndex > rf.lastApplied {
+			rf.lastApplied++
+			entry := rf.log[rf.lastApplied]
+			commandIndex := rf.lastApplied
+			log.Println("Server", rf.me, "applying command:", entry.Command, "with index ", rf.lastApplied, ". CommitIndex - ", rf.commitIndex)
+			rf.mu.Unlock()
+			rf.applyCh <- raftapi.ApplyMsg{
+				CommandValid: true,
+				Command:      entry.Command,
+				CommandIndex: commandIndex,
+			}
+			rf.mu.Lock()
+			log.Println("Server", rf.me, "applied command:", entry.Command, "with index ", rf.lastApplied, ". CommitIndex - ", rf.commitIndex)
 		}
+		rf.mu.Unlock()
+
+		// pause for a random amount of time between 50 and 350
+		// milliseconds.
+		ms := 10 + (rand.Int63() % 11)
+		time.Sleep(time.Duration(ms) * time.Millisecond)
 	}
-	reply.FailedFirstIndex = max(reply.FailedFirstIndex, 1)
 }
+
+// ===== Helpers =====
 
 func (rf *Raft) becomeFollower(term int) {
 	rf.currentTerm = term
