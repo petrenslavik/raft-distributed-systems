@@ -16,6 +16,7 @@ mr-out*
 
 # --- debug logs (e.g. captured raft test output) ---
 *.log
+**/logs/
 
 # --- course/ scaffolding: large, derived, or copyrighted ---
 course/_tools/node_modules/
