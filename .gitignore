@@ -1,24 +1,43 @@
 pkg/
 *-handin.tar.gz
 
-# --- Compiled binaries (built by build-mr.ps1 / Makefile) ---
+# --- Compiled binaries (built by build-mr.ps1 / Makefile / go build) ---
 *.exe
 *.so
 *.dll
+*.dylib
 *.test
+# Lab driver binaries (extensionless, built under src/main)
 src/main/mrsequential
 src/main/mrcoordinator
 src/main/mrworker
+src/main/kvsrv1d
+src/main/raft1d
+src/main/rsm1d
+src/main/kvraft1d
+src/main/shardgrp1d
+src/main/diskvd
+src/main/viewd
+src/main/lockc
+src/main/lockd
+src/main/pbc
+src/main/pbd
 
 # --- MapReduce run output & temp dirs ---
 mr-out*
 **/mr-tmp-*/
+mrtmp.*
+824-mrinput-*.txt
+src/main/diff.out
 
-# --- debug logs (e.g. captured raft test output) ---
+# --- Debug logs & batch-run output ---
 *.log
 **/logs/
 
-# --- course/ scaffolding: large, derived, or copyrighted ---
-course/_tools/node_modules/
-course/_html/
-course/papers/*.pdf
+# --- IDE / editor ---
+.vscode/
+.idea/
+
+# --- OS cruft ---
+.DS_Store
+Thumbs.db
