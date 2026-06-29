@@ -224,6 +224,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		Command: command,
 	})
 	rf.matchIndex[rf.me] = rf.logLength() - 1
+	rf.StartSendEntries()
 	DPrintln("Leader server", rf.me, "added new entry", command, "to log. \n Now log has", len(rf.log), "entries and its content is", rf.log)
 	return rf.logLength() - 1, rf.currentTerm, true
 }
@@ -541,27 +542,29 @@ func (rf *Raft) runHeartbeatCycle() {
 			rf.mu.Unlock()
 			return
 		}
-
-		rf.lastHeartBeat = time.Now()
-		for index := range rf.peers {
-			if index != rf.me {
-				commonIndex := rf.nextIndex[index]
-				DPrintln("Leader server", rf.me, "last common index for", index, "server is ", commonIndex, "snapshot index is", rf.snapshotLastIndex)
-				if commonIndex > rf.snapshotLastIndex {
-					logIndex := rf.absoluteIndexToLogIndex(commonIndex)
-					DPrintln("Leader server", "snapshot index is", rf.snapshotLastIndex, "Log index would be", logIndex, "Log:", rf.log)
-					go rf.sendEntries(index, rf.currentTerm, commonIndex-1, rf.log[logIndex-1].Term, rf.commitIndex, rf.log[logIndex:])
-				} else {
-					go rf.sendInstallSnapshot(index, rf.currentTerm, rf.snapshotLastIndex, rf.snapshotLastTerm, rf.snapshot)
-				}
-			}
-		}
-
+		rf.StartSendEntries()
 		rf.mu.Unlock()
 		// pause for a random amount of time between 50 and 350
 		// milliseconds.
 		ms := 50 + (rand.Int63() % 150)
 		time.Sleep(time.Duration(ms) * time.Millisecond)
+	}
+}
+
+func (rf *Raft) StartSendEntries() {
+	rf.lastHeartBeat = time.Now()
+	for index := range rf.peers {
+		if index != rf.me {
+			commonIndex := rf.nextIndex[index]
+			DPrintln("Leader server", rf.me, "last common index for", index, "server is ", commonIndex, "snapshot index is", rf.snapshotLastIndex)
+			if commonIndex > rf.snapshotLastIndex {
+				logIndex := rf.absoluteIndexToLogIndex(commonIndex)
+				DPrintln("Leader server", "snapshot index is", rf.snapshotLastIndex, "Log index would be", logIndex, "Log:", rf.log)
+				go rf.sendEntries(index, rf.currentTerm, commonIndex-1, rf.log[logIndex-1].Term, rf.commitIndex, rf.log[logIndex:])
+			} else {
+				go rf.sendInstallSnapshot(index, rf.currentTerm, rf.snapshotLastIndex, rf.snapshotLastTerm, rf.snapshot)
+			}
+		}
 	}
 }
 
@@ -590,6 +593,7 @@ func (rf *Raft) applyTicker() {
 
 		for rf.commitIndex > rf.lastApplied {
 			rf.lastApplied++
+			DPrintln("Server", rf.me, "applying command with index ", rf.lastApplied, ". CommitIndex - ", rf.commitIndex, "log length", len(rf.log), rf.log, "snapshot index:", rf.snapshotLastIndex)
 			entry := rf.log[rf.absoluteIndexToLogIndex(rf.lastApplied)]
 			commandIndex := rf.lastApplied
 			DPrintln("Server", rf.me, "applying command:", entry.Command, "with index ", rf.lastApplied, ". CommitIndex - ", rf.commitIndex, "log length", len(rf.log), rf.log, "snapshot index:", rf.snapshotLastIndex)
@@ -601,6 +605,9 @@ func (rf *Raft) applyTicker() {
 			}
 			rf.mu.Lock()
 			DPrintln("Server", rf.me, "applied command:", entry.Command, "with index ", rf.lastApplied, ". CommitIndex - ", rf.commitIndex)
+			if !rf.isSnapshotApplied {
+				break
+			}
 		}
 		rf.mu.Unlock()
 
