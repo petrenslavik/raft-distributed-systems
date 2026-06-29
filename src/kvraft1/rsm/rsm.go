@@ -2,21 +2,24 @@ package rsm
 
 import (
 	"sync"
+	"time"
 
 	"6.5840/kvsrv1/rpc"
 	"6.5840/labrpc"
-	"6.5840/raft1"
+	raft "6.5840/raft1"
 	"6.5840/raftapi"
-	"6.5840/tester1"
-
+	tester "6.5840/tester1"
 )
 
 type Op struct {
 	// Your definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
-}
 
+	Req any
+	Id  int
+	Me  int
+}
 
 // A server (i.e., ../server.go) that wants to replicate itself calls
 // MakeRSM and must implement the StateMachine interface.  This
@@ -30,6 +33,12 @@ type StateMachine interface {
 	Restore([]byte)
 }
 
+type Key struct {
+	Id    int
+	Me    int
+	Index int
+}
+
 type RSM struct {
 	mu           sync.Mutex
 	me           int
@@ -38,6 +47,8 @@ type RSM struct {
 	maxraftstate int // snapshot if log grows this big
 	sm           StateMachine
 	// Your definitions here.
+	results map[Key]chan any
+	id      int
 }
 
 // servers[] contains the ports of the set of
@@ -61,17 +72,25 @@ func MakeRSM(servers []*labrpc.ClientEnd, me int, persister *tester.Persister, m
 		maxraftstate: maxraftstate,
 		applyCh:      make(chan raftapi.ApplyMsg),
 		sm:           sm,
+		results:      make(map[Key]chan any, 0),
 	}
+
 	if !tester.UseRaftStateMachine {
 		rsm.rf = raft.Make(servers, me, persister, rsm.applyCh)
 	}
+
+	snapshot := persister.ReadSnapshot()
+	if len(snapshot) > 0 {
+		rsm.sm.Restore(snapshot)
+	}
+
+	go rsm.Read()
 	return rsm
 }
 
 func (rsm *RSM) Raft() raftapi.Raft {
 	return rsm.rf
 }
-
 
 // Submit a command to Raft, and wait for it to be committed.  It
 // should return ErrWrongLeader if client should find new leader and
@@ -81,7 +100,79 @@ func (rsm *RSM) Submit(req any) (rpc.Err, any) {
 	// Submit creates an Op structure to run a command through Raft;
 	// for example: op := Op{Me: rsm.me, Id: id, Req: req}, where req
 	// is the argument to Submit and id is a unique id for the op.
-
 	// your code here
-	return rpc.ErrWrongLeader, nil // i'm dead, try another server.
+	rsm.mu.Lock()
+	op := Op{Req: req, Id: rsm.id, Me: rsm.me}
+	rsm.id++
+
+	index, initialTerm, isLeader := rsm.rf.Start(op)
+	if !isLeader {
+		rsm.mu.Unlock()
+		return rpc.ErrWrongLeader, nil
+	}
+
+	responseChan := make(chan any, 1)
+	channelKey := rsm.constructKey(op, index)
+	rsm.results[channelKey] = responseChan
+	rsm.mu.Unlock()
+	DPrintln("RSM", rsm.me, "submitted op", op.Id, "at index", index)
+	defer func() {
+		rsm.mu.Lock()
+		delete(rsm.results, channelKey)
+		rsm.mu.Unlock()
+	}()
+	for {
+		select {
+		case result := <-responseChan:
+			return rpc.OK, result
+		case <-time.After(20 * time.Millisecond):
+			currentTerm, isLeader := rsm.rf.GetState()
+			if !isLeader || initialTerm != currentTerm {
+				return rpc.ErrWrongLeader, nil
+			}
+		}
+	}
+}
+
+func (rsm *RSM) Read() {
+	for result := range rsm.applyCh {
+		if result.CommandValid {
+			rsm.applyCommand(result)
+		} else {
+			DPrintln("RSM", rsm.me, "restoring snapshot at index", result.SnapshotIndex)
+			rsm.sm.Restore(result.Snapshot)
+		}
+	}
+}
+
+func (rsm *RSM) applyCommand(message raftapi.ApplyMsg) {
+	op := message.Command.(Op)
+	opResult := rsm.sm.DoOp(op.Req)
+	DPrintln("RSM", rsm.me, "applied op", op.Id, "from", op.Me, "at index", message.CommandIndex)
+
+	rsm.mu.Lock()
+	channel, exists := rsm.results[rsm.constructKey(op, message.CommandIndex)]
+	rsm.mu.Unlock()
+
+	if exists {
+		DPrintln("RSM", rsm.me, "delivering result for op", op.Id, "at index", message.CommandIndex)
+		channel <- opResult
+	}
+
+	rsm.maybeSnapshot(message.CommandIndex)
+}
+
+func (rsm *RSM) maybeSnapshot(commandIndex int) {
+	if rsm.maxraftstate != -1 && rsm.rf.PersistBytes() >= rsm.maxraftstate {
+		smSnapshot := rsm.sm.Snapshot()
+		rsm.rf.Snapshot(commandIndex, smSnapshot)
+	}
+}
+
+func (rsm *RSM) constructKey(op Op, index int) Key {
+	return Key{
+		Id:    op.Id,
+		Me:    op.Me,
+		Index: index,
+	}
 }
